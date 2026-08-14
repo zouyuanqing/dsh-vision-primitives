@@ -1,0 +1,6 @@
+# dsh-vision-primitives bundle layer.
+# Installed by: dsh plugin --profile <name> add github:zouyuanqing/dsh-vision-primitives
+# The plugin registers its tools only on the host (no Client half).
+- insert:
+    - id: vision-primitives
+      name: dsh-vision-primitives
