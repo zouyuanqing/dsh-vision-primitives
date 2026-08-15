@@ -1897,6 +1897,121 @@ fetch(req.url, {
     //   dsh credentials set MIMO_API_KEY <key>
     // 运行时由 getMimoKey() 惰性读取; 未配置时相关工具会给出明确报错。
 
+    /* ---------- 发送时图片桥接 (send-time image bridge) ----------
+     * 社区方案 (HiSeax/dsh-image-to-text、pi2dsh 同思路), 不改 DSH 源码:
+     *  - bypassImageGate: wrap llm.resolveModelInfo, 对不含 image 模态的
+     *    模型临时注入 image → 通过 api-proxy 的图片准入检查 (图片可以
+     *    原生缩略图进入输入框并发送);
+     *  - rewriteImageBlocks: wrap llm.streamWithRegistration (llm.stream 与
+     *    preparedCall.stream 的公共入口), 在 adapter 序列化请求前把 image
+     *    block 物化为工作区文件并替换为 "[Attached image: <绝对路径>]"
+     *    文本 → 纯文本模型拿到地址, 可继续 read_image / vision_analyze;
+     *  - 视觉模型经"原始 resolveModelInfo"判定, 消息原样直发;
+     *  - 全部 disposer 化, 插件停用即恢复原方法。
+     * 开关: 配置 sendTimeConvert=false 时整个桥接不安装 (默认开启)。 */
+    const attachSvc = ctx.get('attachments')
+    const bridgeEnabled = () => (liveConfig && liveConfig.sendTimeConvert !== false)
+    let originalResolveBridge = null
+    let originalStreamBridge = null
+    const BRIDGE_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif' }
+    const bridgeFiles = new Map()
+    async function bridgeMaterialize(ref, signal) {
+      const key = String(ref && ref.attachmentId !== undefined ? ref.attachmentId : '')
+      const hit = bridgeFiles.get(key)
+      if (hit) return hit
+      const stored = await attachSvc.readImage(ref, signal)
+      const ext = BRIDGE_EXT[(stored.ref && stored.ref.mediaType) || ''] || '.png'
+      const path = `${storeDir}/incoming-${Date.now()}-${++psSeq}${ext}`
+      await psRun('write', { path, data: b64encode(stored.data) })
+      bridgeFiles.set(key, path)
+      return path
+    }
+    function bridgeHasImages(blocks) {
+      if (!Array.isArray(blocks)) return false
+      return blocks.some((b) => b && typeof b === 'object' && (b.type === 'image' || (b.type === 'tool-result' && bridgeHasImages(b.content))))
+    }
+    function bridgeHasImageMessages(messages) {
+      return Array.isArray(messages) && messages.some((m) => m && typeof m === 'object' && bridgeHasImages(m.content))
+    }
+    async function bridgeRewriteBlocks(blocks, signal) {
+      const out = []
+      let changed = false
+      for (const b of blocks) {
+        if (!b || typeof b !== 'object') { out.push(b); continue }
+        if (b.type === 'image' && b.attachment) {
+          let p = null
+          try { p = await bridgeMaterialize(b.attachment, signal) } catch (e) { p = null }
+          out.push({ type: 'text', text: p
+            ? `[Attached image: ${p}] 图片已缓存到该路径。我无法直接查看图片;如需了解内容,可用 read_image 查看该文件,或用 vision_analyze(path) 获取结构化视觉证据(语义描述+元素定位)。`
+            : `[图片附件读取失败: ${String(b.attachment.attachmentId)}]` })
+          changed = true
+          continue
+        }
+        if (b.type === 'tool-result' && Array.isArray(b.content)) {
+          const c = await bridgeRewriteBlocks(b.content, signal)
+          if (c !== b.content) { out.push({ ...b, content: c }); changed = true } else { out.push(b) }
+          continue
+        }
+        out.push(b)
+      }
+      return changed ? out : blocks
+    }
+    async function bridgeModelSupportsImage(options) {
+      try {
+        const info = await originalResolveBridge.call(llmSvc, options.provider, options.model, options.signal)
+        return !!(info && Array.isArray(info.inputModalities) && info.inputModalities.indexOf('image') >= 0)
+      } catch (e) { return false }
+    }
+    if (bridgeEnabled() && attachSvc !== undefined && llmSvc !== undefined) {
+      try {
+        originalResolveBridge = typeof llmSvc.resolveModelInfo === 'function' ? llmSvc.resolveModelInfo : null
+        if (originalResolveBridge) {
+          const wrappedResolve = async function (provider, model, signal) {
+            const info = await originalResolveBridge.call(llmSvc, provider, model, signal)
+            if (info && Array.isArray(info.inputModalities) && info.inputModalities.indexOf('image') < 0) {
+              return { ...info, inputModalities: [...info.inputModalities, 'image'] }
+            }
+            return info
+          }
+          llmSvc.resolveModelInfo = wrappedResolve
+          ctx.effect(() => () => {
+            if (llmSvc.resolveModelInfo === wrappedResolve) llmSvc.resolveModelInfo = originalResolveBridge
+          }, 'vision-primitives: bridge resolveModelInfo')
+        }
+        originalStreamBridge = typeof llmSvc.streamWithRegistration === 'function' ? llmSvc.streamWithRegistration : null
+        if (originalStreamBridge) {
+          const wrappedStream = function (options, prepared) {
+            return {
+              async *[Symbol.asyncIterator]() {
+                let effective = options
+                if (bridgeHasImageMessages(options.messages)) {
+                  let shouldRewrite = true
+                  if (originalResolveBridge) {
+                    try { shouldRewrite = !(await bridgeModelSupportsImage(options)) } catch (e) { shouldRewrite = true }
+                  }
+                  if (shouldRewrite) {
+                    const rewritten = []
+                    let changed = false
+                    for (const message of options.messages) {
+                      const content = await bridgeRewriteBlocks(message.content, options.signal)
+                      if (content === message.content) rewritten.push(message)
+                      else { changed = true; rewritten.push({ ...message, content }) }
+                    }
+                    if (changed) effective = { ...options, messages: rewritten }
+                  }
+                }
+                yield* originalStreamBridge.call(llmSvc, effective, prepared)
+              }
+            }
+          }
+          llmSvc.streamWithRegistration = wrappedStream
+          ctx.effect(() => () => {
+            if (llmSvc.streamWithRegistration === wrappedStream) llmSvc.streamWithRegistration = originalStreamBridge
+          }, 'vision-primitives: bridge streamWithRegistration')
+        }
+      } catch (e) { console.error('mimo: image bridge install failed: ' + (e && e.message)) }
+    }
+
     /* ---------- 聊天框图片粘贴 → 路径/证据文本 (paste-to-path, 社区解法) ----------
      * 参考 liustack/modlens 的 paste-to-path 模式, 原生实现:
      *  - Client 在捕获阶段截获剪贴板图片, POST 到本路由; 返回的路径

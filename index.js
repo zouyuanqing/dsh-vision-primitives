@@ -45,7 +45,8 @@ export const Config = z.object({
   model: z.string().default('mimo-v2.5'),
   timeoutMs: z.number().step(1).min(1000).default(300000),
   pasteToPath: z.boolean().default(false),
-  autoDescribe: z.boolean().default(false)
+  autoDescribe: z.boolean().default(false),
+  sendTimeConvert: z.boolean().default(true)
 })
 
 /**

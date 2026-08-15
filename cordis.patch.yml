@@ -6,6 +6,8 @@
 #
 # pasteToPath / autoDescribe default to OFF (paste takeover was too intrusive;
 # enable them from the WebUI card if wanted).
+# sendTimeConvert defaults ON: images are cached to the workspace and handed
+# to text-only models as "[Attached image: <path>]" text at send time.
 - insert:
     - id: vision-primitives
       name: dsh-vision-primitives
@@ -15,3 +17,4 @@
         timeoutMs: 300000
         pasteToPath: false
         autoDescribe: false
+        sendTimeConvert: true

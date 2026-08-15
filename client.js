@@ -258,6 +258,7 @@ window.__ModuleLoader__.load({
       var [message, setMessage] = useState('')
       var [pasteToPath, setPasteToPath] = useState(value.pasteToPath !== false)
       var [autoDescribe, setAutoDescribe] = useState(value.autoDescribe !== false)
+      var [sendTimeConvert, setSendTimeConvert] = useState(value.sendTimeConvert !== false)
 
       useEffect(() => {
         if (value.baseUrl != null && value.baseUrl !== baseUrl) setBaseUrl(value.baseUrl)
@@ -265,6 +266,7 @@ window.__ModuleLoader__.load({
         if (value.timeoutMs != null && value.timeoutMs !== timeoutMs) setTimeoutMs(value.timeoutMs)
         if (typeof value.pasteToPath === 'boolean' && value.pasteToPath !== pasteToPath) setPasteToPath(value.pasteToPath)
         if (typeof value.autoDescribe === 'boolean' && value.autoDescribe !== autoDescribe) setAutoDescribe(value.autoDescribe)
+        if (typeof value.sendTimeConvert === 'boolean' && value.sendTimeConvert !== sendTimeConvert) setSendTimeConvert(value.sendTimeConvert)
         setConfigured(props.credentialConfigured)
         // eslint-disable-next-line react-hooks/exhaustive-deps
       }, [snapshot, props.credentialConfigured])
@@ -281,7 +283,8 @@ window.__ModuleLoader__.load({
           model: model.trim(),
           timeoutMs: Number(timeoutMs),
           pasteToPath: pasteToPath,
-          autoDescribe: autoDescribe
+          autoDescribe: autoDescribe,
+          sendTimeConvert: sendTimeConvert
         }).then((ok) => {
           setApiKey('')
           if (ok.configured != null) setConfigured(ok.configured)
@@ -324,6 +327,7 @@ window.__ModuleLoader__.load({
           field('timeoutMs', t('timeoutMs'), t('timeoutMsHint'), String(timeoutMs), setTimeoutMs),
           checkbox('pasteToPath', t('pasteToPath'), t('pasteToPathHint'), pasteToPath, setPasteToPath),
           checkbox('autoDescribe', t('autoDescribe'), t('autoDescribeHint'), autoDescribe, setAutoDescribe),
+          checkbox('sendTimeConvert', t('sendTimeConvert'), t('sendTimeConvertHint'), sendTimeConvert, setSendTimeConvert),
           h('div', { className: 'vpr-actions' }, [
             h('button', { className: 'vpr-button', disabled: saving || !writable, onClick: save }, saving ? t('saving') : t('save')),
             message ? h('span', { className: 'vpr-message' }, message) : null
@@ -366,6 +370,7 @@ window.__ModuleLoader__.load({
       if (Number.isFinite(patch.timeoutMs) && patch.timeoutMs > 0) writes.push(this.scope.set('timeoutMs', patch.timeoutMs))
       if (typeof patch.pasteToPath === 'boolean') writes.push(this.scope.set('pasteToPath', patch.pasteToPath))
       if (typeof patch.autoDescribe === 'boolean') writes.push(this.scope.set('autoDescribe', patch.autoDescribe))
+      if (typeof patch.sendTimeConvert === 'boolean') writes.push(this.scope.set('sendTimeConvert', patch.sendTimeConvert))
       if (writes.length === 0) return Promise.resolve({ ok: true, configured: this.credentialConfigured })
       return Promise.all(writes).then(function () {
         self.refreshCredential()
@@ -424,6 +429,8 @@ window.__ModuleLoader__.load({
             pasteToPathHint: '开启后,纯文本模型下聊天框粘贴图片自动转为"路径 + 内容摘要"文本(社区 paste-to-path 方案)',
             autoDescribe: '粘贴自动描述',
             autoDescribeHint: '粘贴图片后用 MiMo 生成内容摘要插入输入框(需 API Key)',
+            sendTimeConvert: '发送时图片桥接',
+            sendTimeConvertHint: '开启后,纯文本模型可正常粘贴/拖动图片:发送时图片缓存为工作区文件,以 "[Attached image: 路径]" 文本交给模型(可用 read_image / vision_analyze 查看)',
             expand: '展开',
             collapse: '收起',
             save: '保存',
@@ -446,6 +453,9 @@ window.__ModuleLoader__.load({
             pasteToPath: 'Paste takeover for text-only models',
             pasteToPathHint: 'When on, pasting an image with a text-only model inserts "path + content summary" text instead (paste-to-path)',
             autoDescribe: 'Auto-describe pastes',
+            autoDescribeHint: 'Generate a MiMo content summary for pasted images (needs API key)',
+            sendTimeConvert: 'Send-time image bridge',
+            sendTimeConvertHint: 'When on, text-only models can paste/drag images: at send time images are cached as workspace files and handed to the model as "[Attached image: path]" text (readable via read_image / vision_analyze)',
             autoDescribeHint: 'Generate a MiMo content summary for pasted images (needs API key)',
             expand: 'Expand',
             collapse: 'Collapse',
