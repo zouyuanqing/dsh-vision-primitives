@@ -15,7 +15,8 @@ Design inspired by [vision-primitives-mcp](https://github.com/zouyuanqing/vision
 | 🔍 **局部无损放大** | `vision_zoom` 最近邻放大(像素级保真),保留到原帧的坐标映射链 |
 | 📐 **几何验证** | `vision_annotate` / `vision_measure` / `vision_diff` / `vision_find_color` / `vision_ocr` 确定性验证 |
 | 🖥️ **MiMo V2.5 后端** | `vision_describe` / `vision_locate`(多模态理解 + 视觉定位),并注册 `mimo` 模型路由(LlmAdapter,流式/函数调用/图像输入全支持) |
-| 📋 **聊天框贴图(paste-to-path)** | 纯文本模型下聊天框粘贴图片 → 自动转为"文件路径 + MiMo 内容摘要"文本注入(社区 paste-to-path 方案原生实现);视觉模型(如 mimo-v2.5)保持原生图片附件不受影响 |
+| 📋 **聊天框贴图(paste-to-path)** | 纯文本模型下聊天框粘贴图片 → 自动转为"文件路径 + 视觉证据"文本注入(社区 paste-to-path 方案原生实现);视觉模型(如 mimo-v2.5)保持原生图片附件不受影响 |
+| 🧾 **视觉证据协议(VEP)** | `vision_analyze`:VLM 先思考(草稿默认丢弃)→ 结构化输出 caption(语义描述)+ layout(布局)+ elements(元素列表,带归一化/像素 box + SOM 格子编号 + 屏幕坐标),把 VLM 模糊感知桥接到确定性像素数学 |
 | 🧱 **最小 OS 边界** | 仅截屏 / OCR / 二进制落盘 3 类走 Host 原生 `subprocess` 服务调用 Windows PowerShell 系统脚本;不含桌面键鼠控制 |
 | 🔒 **零硬编码密钥** | MiMo API key 从 DSH credentials 惰性读取,不写入源码 |
 
@@ -57,6 +58,7 @@ dsh credentials set MIMO_API_KEY <your-key>
 | `vision_ocr` | Windows 原生 OCR,返回词的文本框与帧/屏幕坐标(文本锚定) |
 | `vision_describe` | MiMo 描述当前帧(多模态理解,需 API key) |
 | `vision_locate` | MiMo 视觉定位,返回包围盒,自动反算原帧/屏幕坐标(需 API key) |
+| `vision_analyze` | **视觉证据协议**:结构化输出 caption/layout/elements(归一化+像素 box、SOM 格子编号、屏幕坐标),网格写入会话可直接 `vision_resolve(cell=N)` |
 | `vision_state` / `vision_reset` | 会话状态查看 / 清空 |
 
 ## 配置(WebUI + CLI)
@@ -96,11 +98,26 @@ dsh credentials set MIMO_API_KEY <your-key>
 ## 聊天框图片输入(两种模式)
 
 1. **视觉模型原生贴图**:会话模型切到 **MiMo V2.5**(支持 image 输入)后,聊天框可直接粘贴图片作为消息附件 —— 插件注册的 `mimo` 模型路由即为此服务
-2. **纯文本模型 paste-to-path**:使用 deepseek 等纯文本模型时,聊天框粘贴图片会被插件接管(默认开启 `pasteToPath`),自动转为:
+2. **纯文本模型 paste-to-path**:使用 deepseek 等纯文本模型时,聊天框粘贴图片会被插件接管(默认开启 `pasteToPath`),自动转为**视觉证据文本**:
    ```
-   C:\Users\<你>\.vispri\paste-xxx.png 【图片内容: <MiMo 摘要,需 API Key>】
+   C:\Users\<你>\.vispri\paste-xxx.png
+   【图片分析】<自然语言语义描述(caption)>
+   关键元素: 登录按钮「登录」 @格子7; 标题栏 @格子2; …
    ```
-   模型看到的是"文件路径 + 内容摘要"纯文本,可继续用 `read_image` / `vision_*` 工具深入处理;不再触发 "model does not support images" 报错。视觉模型粘贴不会被劫持(保持原生缩略图附件)
+   模型看到的是"文件路径 + 语义描述 + 元素定位(Grounding box→SOM 格子编号)",可直接 `vision_resolve(cell=7)` 获取元素精确像素/屏幕坐标;不再触发 "model does not support images" 报错。视觉模型粘贴不会被劫持(保持原生缩略图附件)
+
+## 视觉证据协议(VEP)
+
+纯文本模型"看懂图片"的统一协议(工具 `vision_analyze` + 贴图引擎共用):
+
+```
+图片 → MiMo 内部思考(reasoning 草稿, 默认丢弃, includeReasoning 可选)
+     → 结构化输出: caption(2-4 句语义) + layout(布局) + elements[]
+     → 确定性后处理: box_norm(0-1000) → 像素 box / 中心点 / SOM 4×4 格子编号
+                     (网格写入会话, vision_resolve(cell=N) 直接可解析)
+```
+
+元素输出示例: `{ label: "登录按钮", text: "登录", confidence: 0.92, box: [x1,y1,x2,y2], box_norm: [...], center: [...], grid_cell: 7, screen_center: [...] }`
 
 ## 典型工作流(交互式图形推理协议)
 

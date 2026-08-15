@@ -72,7 +72,8 @@ const result = apply(ctx, config)
 const expected = [
   'vision_capture', 'vision_grid', 'vision_resolve', 'vision_zoom',
   'vision_annotate', 'vision_measure', 'vision_diff', 'vision_find_color',
-  'vision_ocr', 'vision_describe', 'vision_locate', 'vision_state', 'vision_reset'
+  'vision_ocr', 'vision_describe', 'vision_locate', 'vision_analyze',
+  'vision_state', 'vision_reset'
 ]
 
 let ok = true

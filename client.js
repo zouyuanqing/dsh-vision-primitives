@@ -146,10 +146,24 @@ window.__ModuleLoader__.load({
             var r = results[i]
             if (!r || !r.path) continue
             var line = r.path
-            if (r.summary) line += ' 【图片内容: ' + r.summary + '】'
+            var a = r.analysis
+            if (a && a.ok) {
+              if (a.caption) line += '\n【图片分析】' + a.caption
+              if (a.elements && a.elements.length) {
+                var els = []
+                for (var j = 0; j < a.elements.length; j++) {
+                  var el = a.elements[j]
+                  var s = el.label
+                  if (el.text) s += '「' + el.text + '」'
+                  if (el.grid_cell) s += ' @格子' + el.grid_cell
+                  els.push(s)
+                }
+                line += '\n关键元素: ' + els.join('; ')
+              }
+            }
             parts.push(line)
           }
-          if (parts.length) insertText(target, parts.join(' ') + ' ')
+          if (parts.length) insertText(target, parts.join('\n') + '\n')
         })
         .catch(function (error) {
           if (error && error.status === 404) {

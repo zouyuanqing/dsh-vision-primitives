@@ -1282,6 +1282,101 @@ fetch(req.url, {
     const renderJson = (args, value) => [{ type: 'text', text: JSON.stringify(value, null, 2) }]
     const JSON_OUT = { schema: { type: 'json' }, render: renderJson }
 
+    /* ---------- Visual Evidence Protocol (视觉证据协议) ----------
+     * 把图片文本化为"模型间可视化交流语言":
+     *   VLM 先思考(reasoning 草稿, 默认丢弃) → 结构化输出
+     *   { caption(自然语言语义), layout(布局概述), elements[{label, box_norm,
+     *     text, confidence}] } → 确定性后处理把 box_norm(0-1000) 映射为
+     *   像素 box/中心点/所属 SOM 格子编号(4x4, 存入 state.grids 可直接
+     *   vision_resolve) —— 将 VLM 的模糊感知桥接到确定性像素数学。
+     * 用户贴图(paste-to-path quick 模式)与模型主动调用(vision_analyze
+     * full 模式)共用同一协议。 */
+    function gridCellsOf(w, h, rows, cols) {
+      const cells = []
+      const cw = w / cols
+      const ch = h / rows
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const n = r * cols + c + 1
+          const box = [Math.round(c * cw), Math.round(r * ch), Math.round((c + 1) * cw), Math.round((r + 1) * ch)]
+          cells.push({ n, box, center: [Math.round((box[0] + box[2]) / 2), Math.round((box[1] + box[3]) / 2)] })
+        }
+      }
+      return cells
+    }
+    function attachGeometry(el, img, frameId, cells) {
+      const w = img.width
+      const h = img.height
+      const boxNorm = Array.isArray(el.box) && el.box.length === 4 ? el.box.map((v) => clampInt(v, 0, 1000, 0)) : [0, 0, 1000, 1000]
+      const box = [Math.round(boxNorm[0] * w / 1000), Math.round(boxNorm[1] * h / 1000), Math.round(boxNorm[2] * w / 1000), Math.round(boxNorm[3] * h / 1000)]
+      const center = [Math.round((box[0] + box[2]) / 2), Math.round((box[1] + box[3]) / 2)]
+      let cell = null
+      if (cells) {
+        for (const c of cells) {
+          if (center[0] >= c.box[0] && center[0] < c.box[2] && center[1] >= c.box[1] && center[1] < c.box[3]) { cell = c; break }
+        }
+      }
+      const out = {
+        label: typeof el.label === 'string' ? el.label : 'element',
+        text: typeof el.text === 'string' ? el.text : '',
+        confidence: Number.isFinite(el.confidence) ? Math.max(0, Math.min(1, el.confidence)) : 0,
+        box,
+        box_norm: boxNorm,
+        center,
+        grid_cell: cell ? cell.n : null,
+        grid_box: cell ? cell.box : null
+      }
+      if (frameId && state.frames[frameId]) {
+        const sc = frameToScreen(frameId, center[0], center[1])
+        if (sc) out.screen_center = [Math.round(sc.x), Math.round(sc.y)]
+      }
+      return out
+    }
+    const ANALYZE_PROMPT = (img, maxElements) => `你是精确的视觉理解与定位助手。分析这张图片,只输出一个纯 JSON 对象(不要 markdown 代码块, 不要任何其它文字):
+{"caption":"2-4 句自然语言语义描述: 图片整体内容/场景/界面用途","layout":"1-2 句整体布局概述(分区与主次关系)","elements":[{"label":"元素简短名称","box":[x1,y1,x2,y2],"text":"元素上的文字(没有则空串)","confidence":0到1}]}
+坐标规则: box 使用归一化坐标, 每个值都是 0-1000 的整数(0=左/上边缘, 1000=右/下边缘), 紧致包围目标。elements 只列最重要的至多 ${maxElements} 个元素(按钮/输入框/标题/图标/图片/文本块等), 按重要性降序; 没有重要元素时用空数组。`
+    async function analyzeImageCore(img, maxElements, signal, dataUrlOverride) {
+      const messages = [{
+        role: 'user',
+        content: [
+          { type: 'image_url', image_url: { url: dataUrlOverride || frameDataUrl(img) } },
+          { type: 'text', text: ANALYZE_PROMPT(img, maxElements) }
+        ]
+      }]
+      let msg = null
+      let raw = ''
+      try {
+        msg = await mimoChat(messages, signal)
+        raw = (msg && msg.content) || ''
+      } catch (e) {
+        raw = ''
+      }
+      let parsed = null
+      const m = raw.match(/\{[\s\S]*\}/)
+      if (m) { try { parsed = JSON.parse(m[0]) } catch (e) { parsed = null } }
+      if (!parsed || typeof parsed.caption !== 'string' || !Array.isArray(parsed.elements)) {
+        // 一次宽松重试: 强调纯 JSON
+        messages[0].content[1].text = ANALYZE_PROMPT(img, maxElements) + '\n注意: 直接输出 JSON 对象本身, 不要用 ``` 包裹, 不要解释。'
+        msg = await mimoChat(messages, signal)
+        raw = (msg && msg.content) || ''
+        parsed = null
+        const m2 = raw.match(/\{[\s\S]*\}/)
+        if (m2) { try { parsed = JSON.parse(m2[0]) } catch (e) { parsed = null } }
+        if (!parsed || typeof parsed.caption !== 'string' || !Array.isArray(parsed.elements)) {
+          return { ok: false, raw: raw.slice(0, 1200), note: 'MiMo 结构化输出解析失败; 可重试或改用 vision_describe' }
+        }
+      }
+      const reasoning = typeof msg.reasoning_content === 'string' && msg.reasoning_content.length > 0 ? msg.reasoning_content : null
+      const elements = parsed.elements.slice(0, Math.max(1, Math.min(24, maxElements || 8)))
+      return {
+        ok: true,
+        caption: String(parsed.caption),
+        layout: typeof parsed.layout === 'string' ? parsed.layout : '',
+        elements,
+        ...(reasoning ? { reasoning } : {})
+      }
+    }
+
     function resolveSync(args) {
       const f = getFrame(args.frame_id)
       const given = (args.cell !== undefined ? 1 : 0) + (args.box !== undefined ? 1 : 0) + (args.point !== undefined ? 1 : 0)
@@ -1694,6 +1789,55 @@ fetch(req.url, {
         }
       }),
       harness.defineTool({
+        name: 'vision_analyze',
+        description: '视觉证据协议(VEP): 把当前帧/图片文本化为"模型间可视化交流语言"。MiMo 先内部思考(草稿默认不返回)再结构化输出: caption(自然语言语义描述) + layout(布局概述) + elements(重要元素列表)。每个元素带归一化 box(0-1000)、像素 box、中心点、所属 SOM 4x4 格子编号(结果已写入会话网格, 可直接 vision_resolve(cell=N) 拿精确坐标)。这是纯文本模型"看懂图片"的主入口, 也是聊天框贴图的底层引擎。',
+        parameters: {
+          frame_id: { type: 'string', description: '帧 ID, 省略为当前帧' },
+          path: { type: 'string', description: '工作区图片绝对路径(无帧时用), 与 frame_id 二选一' },
+          maxElements: { type: 'integer', description: '最多识别的元素数, 默认 8, 范围 1-16' },
+          includeReasoning: { type: 'boolean', description: '附带 MiMo 推理草稿(默认 false)' }
+        },
+        output: JSON_OUT,
+        timeoutMs: 180000,
+        async execute(args, exec) {
+          let f = null
+          let img = null
+          if (args.frame_id !== undefined) {
+            f = getFrame(args.frame_id)
+            img = { width: f.width, height: f.height, data: f.data }
+          } else if (typeof args.path === 'string' && args.path.length > 0) {
+            img = await loadPngNative(args.path)
+            const id = newFrame(args.path, img.width, img.height, img.data, null, null)
+            f = state.frames[id]
+          } else {
+            throw new Error('frame_id 与 path 至少给一个')
+          }
+          const maxElements = clampInt(args.maxElements, 1, 16, 8)
+          const maxEdge = 1600
+          const imgSent = downscale(img, maxEdge)
+          const s = Math.max(1, Math.ceil(Math.max(img.width, img.height) / maxEdge))
+          const analysis = await analyzeImageCore(imgSent, maxElements, exec.signal)
+          if (!analysis.ok) return analysis
+          // 确定性后处理: 归一化 box → 像素/中心/SOM 格子; 网格写入会话供 vision_resolve 直接解析
+          const cells = gridCellsOf(f.width, f.height, 4, 4)
+          state.grids[f.id] = { rows: 4, cols: 4, cells, path: null }
+          const elements = analysis.elements.map((el) => attachGeometry(el, img, f.id, cells))
+          const out = {
+            ok: true,
+            frame_id: f.id,
+            path: f.path,
+            width: f.width,
+            height: f.height,
+            caption: analysis.caption,
+            layout: analysis.layout,
+            elements,
+            note: 'elements 中的 grid_cell 已写入会话网格, 可直接 vision_resolve(cell=N) 获取该元素的精确像素/屏幕坐标'
+          }
+          if (analysis.reasoning && args.includeReasoning === true) out.reasoning = analysis.reasoning
+          return out
+        }
+      }),
+      harness.defineTool({
         name: 'vision_state',
         description: '查看视觉会话状态:帧列表(尺寸/来源/缩放映射链)、当前帧、最近定位锚点、各帧网格与屏幕信息。',
         parameters: {},
@@ -1814,31 +1958,22 @@ fetch(req.url, {
         })
       })
     }
-    async function describePastedImage(bytes, mime) {
-      const dataUrl = 'data:' + (mime || 'image/png') + ';base64,' + b64encode(bytes)
-      const body = {
-        model: cfgModel(),
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'image_url', image_url: { url: dataUrl } },
-            { type: 'text', text: '请用不超过 100 字的中文概括这张图片的可见内容(界面元素/文字/场景)。直接输出概括, 不要额外说明。' }
-          ]
-        }],
-        stream: false,
-        max_tokens: 512
+    /* 贴图分析(视觉证据协议 quick 模式): PNG 可解码时注册为会话帧并做
+       完整几何映射(像素/SOM 格子), 否则 data URL 直发仅保留归一化 box。 */
+    async function analyzePastedImage(bytes, mime, frameId) {
+      let img = null
+      try { img = decodePng(bytes) } catch (e) { img = null }
+      if (img) {
+        const analysis = await analyzeImageCore(img, 4, undefined)
+        if (!analysis.ok) return analysis
+        const cells = gridCellsOf(img.width, img.height, 4, 4)
+        if (frameId) state.grids[frameId] = { rows: 4, cols: 4, cells, path: null }
+        const elements = analysis.elements.map((el) => attachGeometry(el, img, frameId || null, cells))
+        return { ok: true, caption: analysis.caption, layout: analysis.layout, elements }
       }
-      const handle = await mimoCall(body, { stream: false, timeoutMs: cfgTimeout() })
-      const outcome = await handle.done
-      let text = ''
-      try { text = handle.collected.stdout.readFrom(0).text.trim() } catch (e) { text = '' }
-      if (outcome.exitCode !== 0 || !text) throw new Error('mimo describe failed (exit ' + outcome.exitCode + ')')
-      let ev = null
-      try { ev = JSON.parse(text) } catch (e) { throw new Error('mimo describe bad output') }
-      if (ev.type === 'error') throw new Error('mimo describe: ' + (ev.message || ''))
-      const msg = ev.data && ev.data.choices && ev.data.choices[0] && ev.data.choices[0].message
-      if (!msg || typeof msg.content !== 'string' || msg.content.length === 0) throw new Error('mimo describe: no content')
-      return msg.content.trim()
+      // 非 PNG(JPEG/WebP 等): 直接发 data URL, 保留归一化坐标(0-1000)
+      const dataUrl = 'data:' + (mime || 'image/png') + ';base64,' + b64encode(bytes)
+      return analyzeImageCore({ width: 1000, height: 1000 }, 4, undefined, dataUrl)
     }
     if (webServerSvc !== undefined) {
       ctx.effect(() => webServerSvc.register({
@@ -1863,13 +1998,17 @@ fetch(req.url, {
               const bytes = await collectReqBytes(req, 64 * 1024 * 1024)
               const path = `${storeDir}/paste-${Date.now()}-${++psSeq}${pasteExtOf(mime)}`
               await psRun('write', { path, data: b64encode(bytes) })
-              const out = { path }
+              let frameId = null
+              try {
+                const img = decodePng(bytes)
+                frameId = newFrame(path, img.width, img.height, img.data, null, null)
+              } catch (e) { frameId = null }
+              const out = { path, ...(frameId ? { frame_id: frameId } : {}) }
               if (pasteAutoDescribe()) {
                 try {
-                  out.summary = await describePastedImage(bytes, mime)
+                  out.analysis = await analyzePastedImage(bytes, mime, frameId)
                 } catch (e) {
-                  out.summary = ''
-                  out.describeError = String((e && e.message) || e)
+                  out.analysis = { ok: false, note: String((e && e.message) || e) }
                 }
               }
               res.writeHead(200, { 'content-type': 'application/json' })
