@@ -58,6 +58,38 @@ dsh credentials set MIMO_API_KEY <your-key>
 | `vision_locate` | MiMo 视觉定位,返回包围盒,自动反算原帧/屏幕坐标(需 API key) |
 | `vision_state` / `vision_reset` | 会话状态查看 / 清空 |
 
+## 配置(WebUI + CLI)
+
+插件注册 `vision-primitives` 配置项,在 **设置 → 插件配置** 页出现 "Vision Primitives" 卡片,可配置:
+
+| 配置项 | 默认值 | 说明 |
+|---|---|---|
+| `apiKey` | 空 | MiMo API key(secret,经 credentials 域保存,不回显) |
+| `baseUrl` | `https://api.xiaomimimo.com/v1` | MiMo OpenAI 兼容端点 |
+| `model` | `mimo-v2.5` | 模型名 |
+| `timeoutMs` | `300000` | 单次调用超时 |
+
+也可用 CLI / 行配置:
+
+```sh
+# CLI 设置 API key(等价于 WebUI 卡片)
+dsh credentials set MIMO_API_KEY <your-key>
+```
+
+插件行 `config`(cordis.patch.yml)作为配置 base 层:
+
+```yaml
+- insert:
+    - id: vision-primitives
+      name: dsh-vision-primitives
+      config:
+        baseUrl: https://api.xiaomimimo.com/v1
+        model: mimo-v2.5
+        timeoutMs: 300000
+```
+
+解析优先级:WebUI 用户设置 > 行配置 > 默认值;`apiKey` 先查设置再查 credentials。未配置 key 时,相关工具会给出明确报错提示;纯本地视觉原语(网格/缩放/标注/测量/差分/颜色/OCR)不需要任何 key。
+
 ## 典型工作流(交互式图形推理协议)
 
 ```
@@ -82,17 +114,18 @@ node inflate-diff-test.js  # inflate 与 Node zlib 差分对拍
 
 ## 文件
 
-- `index.js` —— bundle 入口(官方 `defineTool` 门面 + 插件体加载)
+- `index.js` —— bundle Host 入口(官方 `defineTool` 门面 + 插件体加载 + settings 注册)
+- `client.js` —— bundle Client 半部(WebUI 设置 → 插件配置 卡片)
 - `plugin.host.js` —— 插件源码(与 DSH 动态插件沙箱 `code.host` 完全同一份)
 - `mimo-client.cjs` —— node 子进程 SSE 客户端(直连 Xiaomi MiMo API)
 - `cordis.patch.yml` —— bundle 补丁层
-- `kernel-test.js` / `inflate-diff-test.js` —— 内核测试
+- `kernel-test.js` / `inflate-diff-test.js` / `smoke-test.mjs` —— 测试
 
 ## 已知限制
 
 - 屏幕截取 / 原生 OCR 目前为 Windows 实现(PowerShell `Graphics.CopyFromScreen` / WinRT `OcrEngine`)
 - 帧文件存储于 `sandboxPolicy.workspaceRoot/.vispri`
-- 插件为 Host-only 包(无 Client UI 半部)
+- 动态插件沙箱形态(`cordis_define` 创建的开发态插件)因审批策略为 `never` 无法激活 Client 半部,故 WebUI 配置卡片仅在 bundle 安装形态下可用;动态形态可用 CLI `dsh credentials set MIMO_API_KEY <key>` 配置
 
 ## License
 

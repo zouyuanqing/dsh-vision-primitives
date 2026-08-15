@@ -1,6 +1,12 @@
 # dsh-vision-primitives bundle layer.
 # Installed by: dsh plugin --profile <name> add github:zouyuanqing/dsh-vision-primitives
-# The plugin registers its tools only on the host (no Client half).
+# The plugin registers its tools on the host and its configuration card in
+# the WebUI (设置 → 插件配置 → Vision Primitives). The row config below serves
+# as the settings base layer; the WebUI user section overrides it.
 - insert:
     - id: vision-primitives
       name: dsh-vision-primitives
+      config:
+        baseUrl: https://api.xiaomimimo.com/v1
+        model: mimo-v2.5
+        timeoutMs: 300000

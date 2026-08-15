@@ -1,11 +1,16 @@
 {
   "name": "dsh-vision-primitives",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Native interactive visual-reasoning plugin for DeepSeek Harness: precise pixel grounding (SOM grid, zoom, annotate, measure, diff, color, OCR) + MiMo V2.5 multimodal backend, with zero external MCP servers.",
   "type": "module",
   "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
   "files": [
     "index.js",
+    "client.js",
     "plugin.host.js",
     "mimo-client.cjs",
     "cordis.patch.yml",
@@ -26,7 +31,9 @@
     "multimodal"
   ],
   "dependencies": {
-    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6"
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.6",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6",
+    "@deepseek-ai/schemastery": "^3.18.1"
   },
   "engines": {
     "node": ">=18"
@@ -34,6 +41,16 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-api-remotes"
+      ]
     }
   }
 }

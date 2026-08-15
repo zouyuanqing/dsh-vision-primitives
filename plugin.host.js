@@ -1,7 +1,7 @@
 return {
   name: 'vision-primitives-native',
   inject: ['fs', 'subprocess'],
-  apply(ctx) {
+  apply(ctx, config) {
     /* =========================================================================
      * 原生交互式视觉推理插件 (vision-primitives, native DeepSeek Harness)
      * 参考: https://github.com/zouyuanqing/vision-primitives-mcp
@@ -978,13 +978,36 @@ try {
     /* ------------------- MiMo v2.5 多模态模型后端 ------------------- */
     /* 传输: 经 Host 原生 subprocess 服务派生 node 子进程, 直连 Xiaomi MiMo OpenAI 兼容 API */
 
-    const MIMO_BASE = 'https://api.xiaomimimo.com/v1'
-    const MIMO_MODEL = 'mimo-v2.5'
-    // API key 不硬编码: 从 DSH credentials (MIMO_API_KEY) 惰性读取。
-    // 配置: dsh credentials set MIMO_API_KEY <key>
+    /* 运行时配置, 优先级: settings 用户设置 > 插件行 config(base) > 内置默认值。
+       bundle 版由 index.js 注入 harness.vprSettings (schemastery schema +
+       installSettingsSection), 在 WebUI 设置 → 插件配置 中可编辑;
+       动态插件沙箱无该注入时, 仅使用 config/默认值与 credentials。 */
+    const MIMO_BASE_DEFAULT = 'https://api.xiaomimimo.com/v1'
+    const MIMO_MODEL_DEFAULT = 'mimo-v2.5'
+    let liveConfig = Object.assign({ baseUrl: MIMO_BASE_DEFAULT, model: MIMO_MODEL_DEFAULT, timeoutMs: 300000 }, config || {})
+    const cfgBaseUrl = () => (liveConfig && typeof liveConfig.baseUrl === 'string' && liveConfig.baseUrl.length > 0 ? liveConfig.baseUrl : MIMO_BASE_DEFAULT)
+    const cfgModel = () => (liveConfig && typeof liveConfig.model === 'string' && liveConfig.model.length > 0 ? liveConfig.model : MIMO_MODEL_DEFAULT)
+    const cfgTimeout = () => (liveConfig && Number.isFinite(liveConfig.timeoutMs) && liveConfig.timeoutMs > 0 ? liveConfig.timeoutMs : 300000)
+    const settingsSvc = ctx.get('settings')
+    if (settingsSvc !== undefined && harness.vprSettings !== undefined) {
+      try {
+        harness.vprSettings.install(ctx, (thunk) => {
+          try {
+            const resolved = typeof thunk === 'function' ? thunk() : thunk
+            if (resolved && typeof resolved === 'object') liveConfig = Object.assign({}, resolved)
+          } catch (e) { console.error('mimo: settings resolve failed: ' + (e && e.message)) }
+        })
+      } catch (e) { console.error('mimo: settings namespace install failed: ' + (e && e.message)) }
+    }
+    // API key 不硬编码: 优先级 = settings.apiKey (WebUI 卡片) > credentials MIMO_API_KEY。
+    // CLI 配置: dsh credentials set MIMO_API_KEY <key>
     let mimoKeyCache = ''
     async function getMimoKey() {
       if (mimoKeyCache) return mimoKeyCache
+      if (liveConfig && typeof liveConfig.apiKey === 'string' && liveConfig.apiKey.length > 0) {
+        mimoKeyCache = liveConfig.apiKey
+        return mimoKeyCache
+      }
       const cred = ctx.get('credentials')
       if (cred !== undefined) {
         try {
@@ -992,7 +1015,7 @@ try {
           if (v) { mimoKeyCache = String(v); return mimoKeyCache }
         } catch (e) { console.error('mimo: credentials.get failed: ' + (e && e.message)) }
       }
-      throw new Error('mimo: MIMO_API_KEY 未配置。请先运行: dsh credentials set MIMO_API_KEY <key>')
+      throw new Error('mimo: MiMo API key 未配置。请在 WebUI 设置 → 插件配置 填写, 或运行: dsh credentials set MIMO_API_KEY <key>')
     }
     const mimoClientPath = `${storeDir}/mimo-client.cjs`
 
@@ -1060,7 +1083,7 @@ fetch(req.url, {
       await ensureNode()
       const tag = 'm' + (++psSeq)
       const reqPath = `${storeDir}/mimo-req-${tag}.json`
-      await writeTextNative(reqPath, '\uFEFF' + JSON.stringify({ url: `${MIMO_BASE}/chat/completions`, apiKey: await getMimoKey(), body, timeoutMs: (opts && opts.timeoutMs) || 300000 }))
+      await writeTextNative(reqPath, '\uFEFF' + JSON.stringify({ url: `${cfgBaseUrl()}/chat/completions`, apiKey: await getMimoKey(), body, timeoutMs: (opts && opts.timeoutMs) || cfgTimeout() }))
       return spSvc.spawn({
         argv: [nodeExe, mimoClientPath, opts && opts.stream ? 'stream' : 'json', reqPath],
         cwd: workspaceRoot,
@@ -1070,7 +1093,7 @@ fetch(req.url, {
       })
     }
     async function mimoChat(messages, signal) {
-      const handle = await mimoCall({ model: MIMO_MODEL, messages, stream: false, max_tokens: 4096 }, { stream: false, signal })
+      const handle = await mimoCall({ model: cfgModel(), messages, stream: false, max_tokens: 4096 }, { stream: false, signal })
       const outcome = await handle.done
       let text = ''
       try { text = handle.collected.stdout.readFrom(0).text.trim() } catch (e) { text = '' }
@@ -1624,7 +1647,7 @@ fetch(req.url, {
             ]
           }]
           const msg = await mimoChat(messages, exec.signal)
-          return { frame_id: f.id, model: MIMO_MODEL, answer: msg.content }
+          return { frame_id: f.id, model: cfgModel(), answer: msg.content }
         }
       }),
       harness.defineTool({
