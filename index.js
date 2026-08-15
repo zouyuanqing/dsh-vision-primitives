@@ -43,7 +43,9 @@ export const Config = z.object({
   apiKey: z.string().role('secret').default(''),
   baseUrl: z.string().default('https://api.xiaomimimo.com/v1'),
   model: z.string().default('mimo-v2.5'),
-  timeoutMs: z.number().step(1).min(1000).default(300000)
+  timeoutMs: z.number().step(1).min(1000).default(300000),
+  pasteToPath: z.boolean().default(true),
+  autoDescribe: z.boolean().default(true)
 })
 
 /**

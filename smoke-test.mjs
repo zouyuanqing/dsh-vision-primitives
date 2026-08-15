@@ -1,6 +1,7 @@
 // Smoke test for the dsh-vision-primitives bundle entry (index.js).
 // Verifies: plugin body loads, all tools register through the harness facade,
-// the settings namespace installs (with the mock settings service), and no
+// the settings namespace installs (with the mock settings service), the
+// paste-to-path route registers and answers a text-only-model verdict, and no
 // dynamic-sandbox-only global is referenced at apply time.
 import { apply, Config } from './index.js'
 
@@ -23,9 +24,17 @@ const mockSettings = {
   register(ns, schema, opts) {
     installedNs = { ns, schema, base: opts && opts.base }
     return {
-      get: () => ({ apiKey: '', baseUrl: 'https://example.com/v1', model: 'mimo-mock', timeoutMs: 111000 }),
+      get: () => ({ apiKey: '', baseUrl: 'https://example.com/v1', model: 'mimo-mock', timeoutMs: 111000, pasteToPath: true, autoDescribe: true }),
       watch: () => () => {}
     }
+  }
+}
+
+const webRoutes = []
+const mockWebServer = {
+  register(route) {
+    webRoutes.push(route)
+    return () => {}
   }
 }
 
@@ -34,6 +43,7 @@ const ctx = {
     if (name === 'fs') return stubFs
     if (name === 'subprocess') return stubSp
     if (name === 'settings') return mockSettings
+    if (name === 'webServer') return mockWebServer
     return undefined
   },
   inject(names, cb) {
@@ -56,7 +66,7 @@ const ctx = {
   }
 }
 
-const config = { baseUrl: 'https://from-config.example', model: 'mimo-config', timeoutMs: 555000 }
+const config = { baseUrl: 'https://from-config.example', model: 'mimo-config', timeoutMs: 555000, pasteToPath: true, autoDescribe: true }
 const result = apply(ctx, config)
 
 const expected = [
@@ -72,6 +82,21 @@ for (const name of expected) {
 if (registered.length !== expected.length) { ok = false; console.error('unexpected extra tools:', registered.filter((n) => !expected.includes(n))) }
 if (!installedNs) { ok = false; console.error('settings namespace was not installed') }
 if (typeof Config !== 'function') { ok = false; console.error('Config is not a schemastery schema') }
+
+// Exercise the paste route verdict (text-only model → takeover:true).
+const pasteRoute = webRoutes.find((r) => r.path === '/vision-primitives/paste')
+if (!pasteRoute) { ok = false; console.error('paste route not registered') } else {
+  const res = {
+    status: 0,
+    body: '',
+    writeHead(s, h) { this.status = s; this.headers = h },
+    end(b) { this.body = String(b || '') }
+  }
+  await pasteRoute.handler({ method: 'GET', url: '/vision-primitives/paste?model=DeepSeek', on() {} }, res)
+  const verdict = JSON.parse(res.body)
+  if (res.status !== 200 || verdict.takeover !== true) { ok = false; console.error('paste verdict wrong:', res.status, res.body) }
+  console.log('paste verdict (text-only model):', JSON.stringify(verdict))
+}
 
 console.log('registered:', registered.length, 'tools')
 console.log('settings ns installed:', installedNs && installedNs.ns, '| base:', installedNs && JSON.stringify(installedNs.base))

@@ -1749,6 +1749,143 @@ fetch(req.url, {
     //   dsh credentials set MIMO_API_KEY <key>
     // 运行时由 getMimoKey() 惰性读取; 未配置时相关工具会给出明确报错。
 
+    /* ---------- 聊天框图片粘贴 → 路径/证据文本 (paste-to-path, 社区解法) ----------
+     * 参考 liustack/modlens 的 paste-to-path 模式, 原生实现:
+     *  - Client 在捕获阶段截获剪贴板图片, POST 到本路由; 返回的路径
+     *    (及可选的 MiMo 自动摘要) 作为纯文本插入输入框;
+     *  - 视觉模型 (mimo-v2.5 等 inputModalities 含 image) 保持原生图片
+     *    附件, 不被劫持;
+     *  - 纯文本模型 (如 deepseek) 由此获得"贴图"能力 —— 不再触发
+     *    "model does not support images" 报错, 模型看到的是文件路径
+     *    + 自动生成的图片内容摘要, 可继续用 read_image/vision_* 处理。
+     * 开关: 配置 pasteToPath=false 时 GET 返回 404, 客户端完全让行。 */
+    const webServerSvc = ctx.get('webServer')
+    const admVerdict = ctx.get('agentDefaultModel')
+    const pasteEnabled = () => (liveConfig && liveConfig.pasteToPath !== false)
+    const pasteAutoDescribe = () => (liveConfig && liveConfig.autoDescribe !== false)
+    async function currentModelSupportsImage() {
+      try {
+        const sel = admVerdict ? await Promise.resolve(admVerdict.currentSelection()) : undefined
+        if (sel && sel.provider && sel.model && llmSvc !== undefined) {
+          const info = await llmSvc.resolveModelInfo(sel.provider, sel.model)
+          const mods = (info && info.inputModalities) || []
+          return mods.indexOf('image') >= 0
+        }
+      } catch (e) { /* fall through */ }
+      return false
+    }
+    function pasteExtOf(mime) {
+      const m = (mime || '').toLowerCase()
+      if (m.indexOf('png') >= 0) return '.png'
+      if (m.indexOf('jpeg') >= 0 || m.indexOf('jpg') >= 0) return '.jpg'
+      if (m.indexOf('webp') >= 0) return '.webp'
+      if (m.indexOf('gif') >= 0) return '.gif'
+      if (m.indexOf('bmp') >= 0) return '.bmp'
+      return '.png'
+    }
+    function collectReqBytes(req, maxBytes) {
+      return new Promise((resolve, reject) => {
+        const chunks = []
+        let total = 0
+        let settled = false
+        req.on('data', (c) => {
+          if (settled) return
+          total += c.length
+          if (total > maxBytes) {
+            settled = true
+            reject(new Error('paste image exceeds ' + maxBytes + ' bytes'))
+            try { req.destroy() } catch (e) {}
+            return
+          }
+          chunks.push(c)
+        })
+        req.on('end', () => {
+          if (settled) return
+          settled = true
+          const out = new Uint8Array(total)
+          let off = 0
+          for (const c of chunks) { out.set(c, off); off += c.length }
+          resolve(out)
+        })
+        req.on('error', (e) => {
+          if (settled) return
+          settled = true
+          reject(e)
+        })
+      })
+    }
+    async function describePastedImage(bytes, mime) {
+      const dataUrl = 'data:' + (mime || 'image/png') + ';base64,' + b64encode(bytes)
+      const body = {
+        model: cfgModel(),
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image_url', image_url: { url: dataUrl } },
+            { type: 'text', text: '请用不超过 100 字的中文概括这张图片的可见内容(界面元素/文字/场景)。直接输出概括, 不要额外说明。' }
+          ]
+        }],
+        stream: false,
+        max_tokens: 512
+      }
+      const handle = await mimoCall(body, { stream: false, timeoutMs: cfgTimeout() })
+      const outcome = await handle.done
+      let text = ''
+      try { text = handle.collected.stdout.readFrom(0).text.trim() } catch (e) { text = '' }
+      if (outcome.exitCode !== 0 || !text) throw new Error('mimo describe failed (exit ' + outcome.exitCode + ')')
+      let ev = null
+      try { ev = JSON.parse(text) } catch (e) { throw new Error('mimo describe bad output') }
+      if (ev.type === 'error') throw new Error('mimo describe: ' + (ev.message || ''))
+      const msg = ev.data && ev.data.choices && ev.data.choices[0] && ev.data.choices[0].message
+      if (!msg || typeof msg.content !== 'string' || msg.content.length === 0) throw new Error('mimo describe: no content')
+      return msg.content.trim()
+    }
+    if (webServerSvc !== undefined) {
+      ctx.effect(() => webServerSvc.register({
+        kind: 'prefix',
+        path: '/vision-primitives/paste',
+        handler: async (req, res) => {
+          try {
+            const u = new URL(req.url || '/', 'http://x')
+            if (req.method === 'GET') {
+              if (!pasteEnabled()) { res.writeHead(404); res.end(); return }
+              let takeover = true
+              const label = u.searchParams.get('model') || ''
+              if (label && /mimo/i.test(label)) takeover = false
+              else takeover = !(await currentModelSupportsImage())
+              res.writeHead(200, { 'content-type': 'application/json' })
+              res.end(JSON.stringify({ takeover }))
+              return
+            }
+            if (req.method === 'POST') {
+              if (!pasteEnabled()) { res.writeHead(404); res.end(); return }
+              const mime = u.searchParams.get('type') || 'image/png'
+              const bytes = await collectReqBytes(req, 64 * 1024 * 1024)
+              const path = `${storeDir}/paste-${Date.now()}-${++psSeq}${pasteExtOf(mime)}`
+              await psRun('write', { path, data: b64encode(bytes) })
+              const out = { path }
+              if (pasteAutoDescribe()) {
+                try {
+                  out.summary = await describePastedImage(bytes, mime)
+                } catch (e) {
+                  out.summary = ''
+                  out.describeError = String((e && e.message) || e)
+                }
+              }
+              res.writeHead(200, { 'content-type': 'application/json' })
+              res.end(JSON.stringify(out))
+              return
+            }
+            res.writeHead(404)
+            res.end()
+          } catch (e) {
+            res.writeHead(500, { 'content-type': 'application/json' })
+            res.end(JSON.stringify({ error: String((e && e.message) || e) }))
+          }
+        }
+      }), 'vision-primitives: paste route')
+    }
+
     ctx.effect(() => {
       const disposers = TOOLS.map((t) => harness.registerTool(ctx, t))
       return () => {

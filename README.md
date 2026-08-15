@@ -4,7 +4,7 @@
 
 给纯文本智能体装上"精确的眼睛":以 **Set-of-Mark 编号网格 + 确定性像素坐标数学** 为核心,让 Harness 智能体对屏幕/图片做精确到像素的视觉交互推理 —— 全程零外部 MCP 服务器,视觉推理内核 100% 在 DSH Host 运行时内以纯 JS 执行。
 
-Design inspired by [vision-primitives-mcp](https://github.com/zouyuanqing/vision-primitives-mcp), re-implemented as a **native DSH plugin** (dynamic Cordis plugin, Host-only package).
+Design inspired by [vision-primitives-mcp](https://github.com/zouyuanqing/vision-primitives-mcp), re-implemented as a **native DSH plugin** (official profile bundle: host half + WebUI client half).
 
 ## 特性
 
@@ -15,6 +15,7 @@ Design inspired by [vision-primitives-mcp](https://github.com/zouyuanqing/vision
 | 🔍 **局部无损放大** | `vision_zoom` 最近邻放大(像素级保真),保留到原帧的坐标映射链 |
 | 📐 **几何验证** | `vision_annotate` / `vision_measure` / `vision_diff` / `vision_find_color` / `vision_ocr` 确定性验证 |
 | 🖥️ **MiMo V2.5 后端** | `vision_describe` / `vision_locate`(多模态理解 + 视觉定位),并注册 `mimo` 模型路由(LlmAdapter,流式/函数调用/图像输入全支持) |
+| 📋 **聊天框贴图(paste-to-path)** | 纯文本模型下聊天框粘贴图片 → 自动转为"文件路径 + MiMo 内容摘要"文本注入(社区 paste-to-path 方案原生实现);视觉模型(如 mimo-v2.5)保持原生图片附件不受影响 |
 | 🧱 **最小 OS 边界** | 仅截屏 / OCR / 二进制落盘 3 类走 Host 原生 `subprocess` 服务调用 Windows PowerShell 系统脚本;不含桌面键鼠控制 |
 | 🔒 **零硬编码密钥** | MiMo API key 从 DSH credentials 惰性读取,不写入源码 |
 
@@ -68,6 +69,8 @@ dsh credentials set MIMO_API_KEY <your-key>
 | `baseUrl` | `https://api.xiaomimimo.com/v1` | MiMo OpenAI 兼容端点 |
 | `model` | `mimo-v2.5` | 模型名 |
 | `timeoutMs` | `300000` | 单次调用超时 |
+| `pasteToPath` | `true` | 纯文本模型下聊天框贴图接管(路径+摘要文本) |
+| `autoDescribe` | `true` | 粘贴图片自动生成 MiMo 内容摘要 |
 
 也可用 CLI / 行配置:
 
@@ -89,6 +92,15 @@ dsh credentials set MIMO_API_KEY <your-key>
 ```
 
 解析优先级:WebUI 用户设置 > 行配置 > 默认值;`apiKey` 先查设置再查 credentials。未配置 key 时,相关工具会给出明确报错提示;纯本地视觉原语(网格/缩放/标注/测量/差分/颜色/OCR)不需要任何 key。
+
+## 聊天框图片输入(两种模式)
+
+1. **视觉模型原生贴图**:会话模型切到 **MiMo V2.5**(支持 image 输入)后,聊天框可直接粘贴图片作为消息附件 —— 插件注册的 `mimo` 模型路由即为此服务
+2. **纯文本模型 paste-to-path**:使用 deepseek 等纯文本模型时,聊天框粘贴图片会被插件接管(默认开启 `pasteToPath`),自动转为:
+   ```
+   C:\Users\<你>\.vispri\paste-xxx.png 【图片内容: <MiMo 摘要,需 API Key>】
+   ```
+   模型看到的是"文件路径 + 内容摘要"纯文本,可继续用 `read_image` / `vision_*` 工具深入处理;不再触发 "model does not support images" 报错。视觉模型粘贴不会被劫持(保持原生缩略图附件)
 
 ## 典型工作流(交互式图形推理协议)
 
