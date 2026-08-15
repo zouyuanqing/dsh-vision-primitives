@@ -1001,6 +1001,7 @@ try {
     }
     // API key 不硬编码: 优先级 = settings.apiKey (WebUI 卡片) > credentials MIMO_API_KEY。
     // CLI 配置: dsh credentials set MIMO_API_KEY <key>
+    // credentials 契约是 resolve(ref) -> { value } (没有 get 方法)。
     let mimoKeyCache = ''
     async function getMimoKey() {
       if (mimoKeyCache) return mimoKeyCache
@@ -1011,9 +1012,12 @@ try {
       const cred = ctx.get('credentials')
       if (cred !== undefined) {
         try {
-          const v = await Promise.resolve(cred.get('MIMO_API_KEY'))
-          if (v) { mimoKeyCache = String(v); return mimoKeyCache }
-        } catch (e) { console.error('mimo: credentials.get failed: ' + (e && e.message)) }
+          const resolved = await Promise.resolve(cred.resolve('MIMO_API_KEY'))
+          if (resolved && typeof resolved.value === 'string' && resolved.value.length > 0) {
+            mimoKeyCache = resolved.value
+            return mimoKeyCache
+          }
+        } catch (e) { console.error('mimo: credentials.resolve failed: ' + (e && e.message)) }
       }
       throw new Error('mimo: MiMo API key 未配置。请在 WebUI 设置 → 插件配置 填写, 或运行: dsh credentials set MIMO_API_KEY <key>')
     }
