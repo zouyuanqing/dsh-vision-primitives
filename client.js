@@ -472,7 +472,13 @@ window.__ModuleLoader__.load({
         if (typeof document === 'undefined') return function () {}
         document.addEventListener('paste', onPaste, true)
         document.addEventListener('focusin', onPasteFocusIn, true)
+        // 启动预取: 页面渲染出模型按钮后立刻建立裁决缓存, 使"第一次贴图"
+        // 即按裁决接管 (两个时点, 覆盖慢渲染; focusin 预取继续兜底)。
+        var boot1 = setTimeout(function () { refreshPasteVerdict(currentModelLabel()) }, 1500)
+        var boot2 = setTimeout(function () { refreshPasteVerdict(currentModelLabel()) }, 4500)
         return function () {
+          clearTimeout(boot1)
+          clearTimeout(boot2)
           document.removeEventListener('paste', onPaste, true)
           document.removeEventListener('focusin', onPasteFocusIn, true)
         }

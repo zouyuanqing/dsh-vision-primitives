@@ -1903,7 +1903,6 @@ fetch(req.url, {
      *    "model does not support images" 报错, 模型看到的是文件路径
      *    + 自动生成的图片内容摘要, 可继续用 read_image/vision_* 处理。
      * 开关: 配置 pasteToPath=false 时 GET 返回 404, 客户端完全让行。 */
-    const webServerSvc = ctx.get('webServer')
     const admVerdict = ctx.get('agentDefaultModel')
     const pasteEnabled = () => (liveConfig && liveConfig.pasteToPath !== false)
     const pasteAutoDescribe = () => (liveConfig && liveConfig.autoDescribe !== false)
@@ -1975,8 +1974,12 @@ fetch(req.url, {
       const dataUrl = 'data:' + (mime || 'image/png') + ';base64,' + b64encode(bytes)
       return analyzeImageCore({ width: 1000, height: 1000 }, 4, undefined, dataUrl)
     }
-    if (webServerSvc !== undefined) {
-      ctx.effect(() => webServerSvc.register({
+    /* 关键: 路由必须等 webServer 服务出现后注册 (ctx.inject 回调)。
+       此前用 ctx.get('webServer') 一次性探测 —— 本插件只等 tools/fs/subprocess
+       就绪即 apply, webServer 若尚未激活则探测为 undefined 且永不重试,
+       导致路由从未注册 (客户端裁决拿不到 JSON, 贴图接管失效)。 */
+    ctx.inject(['webServer'], (wctx) => {
+      wctx.effect(() => wctx.webServer.register({
         kind: 'prefix',
         path: '/vision-primitives/paste',
         handler: async (req, res) => {
@@ -2023,7 +2026,7 @@ fetch(req.url, {
           }
         }
       }), 'vision-primitives: paste route')
-    }
+    })
 
     ctx.effect(() => {
       const disposers = TOOLS.map((t) => harness.registerTool(ctx, t))

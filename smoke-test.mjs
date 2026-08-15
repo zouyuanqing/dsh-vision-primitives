@@ -47,9 +47,15 @@ const ctx = {
     return undefined
   },
   inject(names, cb) {
-    if (Array.isArray(names) && names.includes('settings') && typeof cb === 'function') {
-      cb({ settings: mockSettings, effect: (fn) => { const d = fn(); return () => { if (d) d() } } })
-      return () => {}
+    if (Array.isArray(names) && typeof cb === 'function') {
+      if (names.includes('webServer')) {
+        cb({ webServer: mockWebServer, effect: (fn) => { const d = fn(); return () => { if (d) d() } } })
+        return () => {}
+      }
+      if (names.includes('settings')) {
+        cb({ settings: mockSettings, effect: (fn) => { const d = fn(); return () => { if (d) d() } } })
+        return () => {}
+      }
     }
     return () => {}
   },
