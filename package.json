@@ -1,12 +1,13 @@
 {
   "name": "dsh-vision-primitives",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Native interactive visual-reasoning plugin for DeepSeek Harness: precise pixel grounding (SOM grid, zoom, annotate, measure, diff, color, OCR) + MiMo V2.5 multimodal backend, with zero external MCP servers.",
   "type": "module",
   "main": "index.js",
   "exports": {
     ".": "./index.js",
-    "./client": "./client.js"
+    "./client": "./client.js",
+    "./package.json": "./package.json"
   },
   "files": [
     "index.js",
