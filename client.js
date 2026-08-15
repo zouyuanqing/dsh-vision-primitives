@@ -14,7 +14,7 @@
  * platform seed words (react, @deepseek-ai/cordis, dsh-client-* services).
  */
 window.__ModuleLoader__.load({
-  id: 'dsh-vision-primitives/client',
+  id: 'dsh-vision-primitives',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
