@@ -72,6 +72,10 @@ const ctx = {
   },
   inject(names, cb) {
     if (Array.isArray(names) && typeof cb === 'function') {
+      if (names.includes('attachments') && names.includes('llm')) {
+        cb({ attachments: mockAttachments, llm: mockLlm, effect: (fn) => { const d = fn(); return () => { if (d) d() } } })
+        return () => {}
+      }
       if (names.includes('webServer')) {
         cb({ webServer: mockWebServer, effect: (fn) => { const d = fn(); return () => { if (d) d() } } })
         return () => {}
