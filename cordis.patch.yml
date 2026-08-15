@@ -3,6 +3,9 @@
 # The plugin registers its tools on the host and its configuration card in
 # the WebUI (设置 → 插件配置 → Vision Primitives). The row config below serves
 # as the settings base layer; the WebUI user section overrides it.
+#
+# pasteToPath / autoDescribe default to OFF (paste takeover was too intrusive;
+# enable them from the WebUI card if wanted).
 - insert:
     - id: vision-primitives
       name: dsh-vision-primitives
@@ -10,3 +13,5 @@
         baseUrl: https://api.xiaomimimo.com/v1
         model: mimo-v2.5
         timeoutMs: 300000
+        pasteToPath: false
+        autoDescribe: false

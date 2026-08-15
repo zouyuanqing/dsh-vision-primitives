@@ -1908,8 +1908,10 @@ fetch(req.url, {
      *    + 自动生成的图片内容摘要, 可继续用 read_image/vision_* 处理。
      * 开关: 配置 pasteToPath=false 时 GET 返回 404, 客户端完全让行。 */
     const admVerdict = ctx.get('agentDefaultModel')
-    const pasteEnabled = () => (liveConfig && liveConfig.pasteToPath !== false)
-    const pasteAutoDescribe = () => (liveConfig && liveConfig.autoDescribe !== false)
+    /* 默认关闭 (显式开启才接管): 粘贴即自动转换的体验过于激进, 用户要求
+       默认去掉。用户仍可在 WebUI 卡片或行配置中开启。 */
+    const pasteEnabled = () => (liveConfig && liveConfig.pasteToPath === true)
+    const pasteAutoDescribe = () => (liveConfig && liveConfig.autoDescribe === true)
     async function currentModelSupportsImage() {
       try {
         const sel = admVerdict ? await Promise.resolve(admVerdict.currentSelection()) : undefined
