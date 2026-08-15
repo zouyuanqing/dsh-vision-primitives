@@ -190,14 +190,17 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * The card: staged form over the settings scope plus the credential
-     * literal. One 保存 button commits everything the card shows.
+     * The card: official PluginCard-style collapsible container (collapsed by
+     * default — title, description and a status badge in the header; the form
+     * fields unfold on click). Staged form over the settings scope plus the
+     * credential literal; one 保存 button commits everything the card shows.
      */
     function VprCard(props) {
       var t = props.t
       var snapshot = useSyncExternalStore(props.subscribe, props.getSnapshot)
       var value = snapshot && snapshot.value ? snapshot.value : {}
       var base = snapshot && snapshot.base ? snapshot.base : {}
+      var [open, setOpen] = useState(false)
       var [baseUrl, setBaseUrl] = useState(value.baseUrl != null ? value.baseUrl : (base.baseUrl != null ? base.baseUrl : ''))
       var [model, setModel] = useState(value.model != null ? value.model : (base.model != null ? base.model : ''))
       var [timeoutMs, setTimeoutMs] = useState(value.timeoutMs != null ? value.timeoutMs : (base.timeoutMs != null ? base.timeoutMs : 300000))
@@ -251,19 +254,33 @@ window.__ModuleLoader__.load({
         ])
       }
 
-      return h('div', { className: 'vpr-card' }, [
-        h('div', { className: 'vpr-title' }, t('title')),
-        h('div', { className: 'vpr-desc' }, t('description')),
-        field('apiKey', t('apiKey'), configured ? t('apiKeySet') : t('apiKeyUnset'), apiKey, setApiKey, { secret: true, placeholder: configured ? '••••••••' : '' }),
-        field('baseUrl', t('baseUrl'), t('baseUrlHint'), baseUrl, setBaseUrl),
-        field('model', t('model'), t('modelHint'), model, setModel),
-        field('timeoutMs', t('timeoutMs'), t('timeoutMsHint'), String(timeoutMs), setTimeoutMs),
-        checkbox('pasteToPath', t('pasteToPath'), t('pasteToPathHint'), pasteToPath, setPasteToPath),
-        checkbox('autoDescribe', t('autoDescribe'), t('autoDescribeHint'), autoDescribe, setAutoDescribe),
-        h('div', { className: 'vpr-actions' }, [
-          h('button', { className: 'vpr-button', disabled: saving || !writable, onClick: save }, saving ? t('saving') : t('save')),
-          message ? h('span', { className: 'vpr-message' }, message) : null
-        ])
+      return h('li', { className: 'vpr-card' + (open ? ' vpr-card-open' : '') }, [
+        h('button', {
+          type: 'button',
+          className: 'vpr-header',
+          'aria-expanded': open,
+          'aria-label': (open ? t('collapse') : t('expand')) + ': ' + t('title'),
+          onClick: () => setOpen(!open)
+        }, [
+          h('span', { className: 'vpr-head-text' }, [
+            h('span', { className: 'vpr-name' }, t('title')),
+            h('span', { className: 'vpr-desc' }, t('description'))
+          ]),
+          h('span', { className: 'vpr-badge' + (configured ? '' : ' vpr-badge-muted') }, configured ? t('apiKeySet') : t('apiKeyUnset')),
+          h('span', { className: 'vpr-chevron' + (open ? ' vpr-chevron-open' : '') }, '▾')
+        ]),
+        open ? h('div', { className: 'vpr-body' }, [
+          field('apiKey', t('apiKey'), configured ? t('apiKeySet') : t('apiKeyUnset'), apiKey, setApiKey, { secret: true, placeholder: configured ? '••••••••' : '' }),
+          field('baseUrl', t('baseUrl'), t('baseUrlHint'), baseUrl, setBaseUrl),
+          field('model', t('model'), t('modelHint'), model, setModel),
+          field('timeoutMs', t('timeoutMs'), t('timeoutMsHint'), String(timeoutMs), setTimeoutMs),
+          checkbox('pasteToPath', t('pasteToPath'), t('pasteToPathHint'), pasteToPath, setPasteToPath),
+          checkbox('autoDescribe', t('autoDescribe'), t('autoDescribeHint'), autoDescribe, setAutoDescribe),
+          h('div', { className: 'vpr-actions' }, [
+            h('button', { className: 'vpr-button', disabled: saving || !writable, onClick: save }, saving ? t('saving') : t('save')),
+            message ? h('span', { className: 'vpr-message' }, message) : null
+          ])
+        ]) : null
       ])
     }
 
@@ -354,6 +371,8 @@ window.__ModuleLoader__.load({
             pasteToPathHint: '开启后,纯文本模型下聊天框粘贴图片自动转为"路径 + 内容摘要"文本(社区 paste-to-path 方案)',
             autoDescribe: '粘贴自动描述',
             autoDescribeHint: '粘贴图片后用 MiMo 生成内容摘要插入输入框(需 API Key)',
+            expand: '展开',
+            collapse: '收起',
             save: '保存',
             saving: '保存中…',
             saved: '已保存',
@@ -375,6 +394,8 @@ window.__ModuleLoader__.load({
             pasteToPathHint: 'When on, pasting an image with a text-only model inserts "path + content summary" text instead (paste-to-path)',
             autoDescribe: 'Auto-describe pastes',
             autoDescribeHint: 'Generate a MiMo content summary for pasted images (needs API key)',
+            expand: 'Expand',
+            collapse: 'Collapse',
             save: 'Save',
             saving: 'Saving…',
             saved: 'Saved',
@@ -420,8 +441,14 @@ window.__ModuleLoader__.load({
       ctx.effect(function () {
         if (typeof document === 'undefined') return function () {}
         if (!css) {
-          css = '.vpr-card{display:flex;flex-direction:column;gap:8px;padding:12px;border:1px solid var(--border-color,#333);border-radius:8px;background:var(--surface-color,transparent)}' +
-            '.vpr-title{font-weight:600;font-size:14px}.vpr-desc{font-size:12px;opacity:.75}.vpr-field{display:flex;flex-direction:column;gap:4px;font-size:13px}' +
+          css = '.vpr-card{list-style:none;border:1px solid var(--border-color,#333);border-radius:8px;background:var(--surface-color,transparent);overflow:hidden}' +
+            '.vpr-header{display:flex;align-items:center;gap:10px;width:100%;padding:12px;background:none;border:none;color:inherit;cursor:pointer;text-align:left;font:inherit}' +
+            '.vpr-head-text{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}' +
+            '.vpr-name{font-weight:600;font-size:14px}.vpr-desc{font-size:12px;opacity:.75}' +
+            '.vpr-badge{flex:none;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border-color,#444)}.vpr-badge-muted{opacity:.6}' +
+            '.vpr-chevron{flex:none;opacity:.7;transition:transform .15s ease}.vpr-chevron-open{transform:rotate(180deg)}' +
+            '.vpr-body{display:flex;flex-direction:column;gap:8px;padding:0 12px 12px}' +
+            '.vpr-field{display:flex;flex-direction:column;gap:4px;font-size:13px}' +
             '.vpr-label{opacity:.9}.vpr-input{padding:6px 8px;border:1px solid var(--border-color,#444);border-radius:6px;background:var(--input-background,#1a1a1a);color:inherit;font:inherit}' +
             '.vpr-hint{font-size:11px;opacity:.6}.vpr-check{display:flex;align-items:center;gap:8px;font-size:13px}.vpr-check .vpr-hint{display:block;width:100%}' +
             '.vpr-actions{display:flex;align-items:center;gap:10px;margin-top:4px}' +
