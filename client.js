@@ -128,6 +128,51 @@ window.__ModuleLoader__.load({
     function onPasteFocusIn() {
       refreshPasteVerdict(currentModelLabel())
     }
+    /* DSH 的图片准入检查在 window 层先于我们运行, 其"模型不支持图片"
+       提示条可能在我们接管成功后仍然挂着。接管成功时主动清除该提示
+       (MutationObserver 观察新增节点, 命中文案即移除; 12s 后停止观察)。 */
+    var ERR_HINTS = ['不支持图片', 'does not support images', 'image.*not supported', 'not support.*image']
+    var errObserver = null
+    var errDismissTimer = null
+    function dismissModelImageError() {
+      if (typeof document === 'undefined') return
+      var sweep = function (root) {
+        var hits = []
+        var walker = document.createTreeWalker(root || document.body, NodeFilter.SHOW_ELEMENT)
+        var el
+        while ((el = walker.nextNode())) {
+          var text = (el.childNodes.length === 1 && el.childNodes[0].nodeType === 3) ? el.textContent : ''
+          if (!text) continue
+          var hit = false
+          for (var i = 0; i < ERR_HINTS.length; i++) {
+            try { if (new RegExp(ERR_HINTS[i], 'i').test(text)) { hit = true; break } } catch (e) {}
+          }
+          if (hit) hits.push(el)
+        }
+        for (var j = 0; j < hits.length; j++) {
+          // 只移除提示条链上的容器, 不碰聊天消息
+          var node = hits[j]
+          var guard = 0
+          while (node && node !== document.body && guard++ < 8) {
+            var role = node.getAttribute && node.getAttribute('role')
+            var cls = String(node.className || '')
+            if (role === 'status' || role === 'alert' || /toast|banner|notice|error/i.test(cls)) { node.remove(); break }
+            node = node.parentElement
+          }
+        }
+      }
+      sweep(document.body)
+      if (errObserver) return
+      errObserver = new MutationObserver(function () {
+        sweep(document.body)
+      })
+      errObserver.observe(document.body, { childList: true, subtree: true })
+      if (errDismissTimer) clearTimeout(errDismissTimer)
+      errDismissTimer = setTimeout(function () {
+        if (errObserver) { errObserver.disconnect(); errObserver = null }
+        errDismissTimer = null
+      }, 12000)
+    }
     function onPaste(event) {
       if (!pasteRouteAvailable) return
       var files = imageFilesOf(event)
@@ -163,7 +208,10 @@ window.__ModuleLoader__.load({
             }
             parts.push(line)
           }
-          if (parts.length) insertText(target, parts.join('\n') + '\n')
+          if (parts.length) {
+            insertText(target, parts.join('\n') + '\n')
+            dismissModelImageError()
+          }
         })
         .catch(function (error) {
           if (error && error.status === 404) {
