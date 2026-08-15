@@ -340,13 +340,18 @@ window.__ModuleLoader__.load({
       }
     }
 
-    /** Required services (cordis fiber inject). */
+    /**
+     * Required services (cordis fiber inject). These are CORDIS SERVICE NAMES —
+     * the `@deepseek-ai/dsh-client-*` package specifiers belong in package.json
+     * `dsh.client.inject` (module dependency graph), never here. Waiting on the
+     * package names blocks activation forever (the "pending" boot failure).
+     */
     var inject = [
-      '@deepseek-ai/dsh-client-connection',
-      '@deepseek-ai/dsh-client-locale',
-      '@deepseek-ai/dsh-client-runtime',
-      '@deepseek-ai/dsh-client-ui-settings',
-      '@deepseek-ai/dsh-api-remotes'
+      'slots',
+      'locale',
+      'connection',
+      'remote',
+      'settingsScope'
     ]
 
     /** Mount the configuration card into the plugins settings section. */
@@ -441,18 +446,20 @@ window.__ModuleLoader__.load({
       ctx.effect(function () {
         if (typeof document === 'undefined') return function () {}
         if (!css) {
-          css = '.vpr-card{list-style:none;border:1px solid var(--border-color,#333);border-radius:8px;background:var(--surface-color,transparent);overflow:hidden}' +
+          // 主题安全: 边框/背景 fallback 一律用中性值, 文字 color:inherit —
+          // 避免浅色主题下深色 fallback 造成的"黑底黑字"。
+          css = '.vpr-card{list-style:none;border:1px solid var(--border-color,rgba(127,127,127,.4));border-radius:8px;background:var(--surface-color,transparent);overflow:hidden}' +
             '.vpr-header{display:flex;align-items:center;gap:10px;width:100%;padding:12px;background:none;border:none;color:inherit;cursor:pointer;text-align:left;font:inherit}' +
             '.vpr-head-text{display:flex;flex-direction:column;gap:2px;flex:1;min-width:0}' +
             '.vpr-name{font-weight:600;font-size:14px}.vpr-desc{font-size:12px;opacity:.75}' +
-            '.vpr-badge{flex:none;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border-color,#444)}.vpr-badge-muted{opacity:.6}' +
+            '.vpr-badge{flex:none;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--border-color,rgba(127,127,127,.4))}.vpr-badge-muted{opacity:.6}' +
             '.vpr-chevron{flex:none;opacity:.7;transition:transform .15s ease}.vpr-chevron-open{transform:rotate(180deg)}' +
             '.vpr-body{display:flex;flex-direction:column;gap:8px;padding:0 12px 12px}' +
             '.vpr-field{display:flex;flex-direction:column;gap:4px;font-size:13px}' +
-            '.vpr-label{opacity:.9}.vpr-input{padding:6px 8px;border:1px solid var(--border-color,#444);border-radius:6px;background:var(--input-background,#1a1a1a);color:inherit;font:inherit}' +
+            '.vpr-label{opacity:.9}.vpr-input{padding:6px 8px;border:1px solid var(--border-color,rgba(127,127,127,.4));border-radius:6px;background:transparent;color:inherit;font:inherit}' +
             '.vpr-hint{font-size:11px;opacity:.6}.vpr-check{display:flex;align-items:center;gap:8px;font-size:13px}.vpr-check .vpr-hint{display:block;width:100%}' +
             '.vpr-actions{display:flex;align-items:center;gap:10px;margin-top:4px}' +
-            '.vpr-button{padding:6px 14px;border-radius:6px;border:1px solid var(--border-color,#444);background:var(--accent-color,#2d6cdf);color:#fff;cursor:pointer;font:inherit}' +
+            '.vpr-button{padding:6px 14px;border-radius:6px;border:1px solid var(--border-color,rgba(127,127,127,.4));background:var(--accent-color,#2d6cdf);color:#fff;cursor:pointer;font:inherit}' +
             '.vpr-button:disabled{opacity:.5;cursor:default}.vpr-message{font-size:12px;opacity:.8}'
           var el = document.createElement('style')
           el.textContent = css
